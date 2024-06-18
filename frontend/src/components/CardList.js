@@ -25,18 +25,33 @@ const CardList = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    const newCard = await createCard({ name, strength, speed, life, threshold, cost, extra_cost: extraCost, description, flip_up: flipUp, flip_up_threshold: flipUpThreshold });
-    setCards([...cards, newCard]);
-    setName('');
-    setStrength('');
-    setSpeed('');
-    setLife('');
-    setThreshold('');
-    setCost('');
-    setExtraCost('');
-    setDescription('');
-    setFlipUp('');
-    setFlipUpThreshold('');
+    try {
+      const newCard = await createCard({
+        name,
+        strength: parseInt(strength, 10) || 0,
+        speed: parseInt(speed, 10) || 0,
+        life: parseInt(life, 10) || 0,
+        threshold,
+        cost: parseInt(cost, 10) || 0,
+        extra_cost: extraCost || null,
+        description: description || null,
+        flip_up: flipUp ? parseInt(flipUp, 10) : null,
+        flip_up_threshold: flipUpThreshold || null
+      });
+      setCards([...cards, newCard]);
+      setName('');
+      setStrength('');
+      setSpeed('');
+      setLife('');
+      setThreshold('');
+      setCost('');
+      setExtraCost('');
+      setDescription('');
+      setFlipUp('');
+      setFlipUpThreshold('');
+    } catch (error) {
+      console.error('Error creating card:', error);
+    }
   };
 
   return (

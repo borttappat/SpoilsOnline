@@ -25,7 +25,7 @@ const User = sequelize.define('User', {
 }, {
   tableName: 'users',
   freezeTableName: true,
-  timestamps: true // Ensure Sequelize adds createdAt and updatedAt
+  timestamps: true
 });
 
 // Define Card model
@@ -73,7 +73,7 @@ const Card = sequelize.define('Card', {
 }, {
   tableName: 'cards',
   freezeTableName: true,
-  timestamps: true // Ensure Sequelize adds createdAt and updatedAt
+  timestamps: true
 });
 
 // Define Deck model
@@ -96,7 +96,7 @@ const Deck = sequelize.define('Deck', {
 }, {
   tableName: 'decks',
   freezeTableName: true,
-  timestamps: true // Ensure Sequelize adds createdAt and updatedAt
+  timestamps: true
 });
 
 // Define DeckCard model
@@ -121,7 +121,7 @@ const DeckCard = sequelize.define('DeckCard', {
 }, {
   tableName: 'deck_cards',
   freezeTableName: true,
-  timestamps: true // Ensure Sequelize adds createdAt and updatedAt
+  timestamps: true
 });
 
 module.exports = {
