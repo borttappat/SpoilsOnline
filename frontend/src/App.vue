@@ -11,11 +11,17 @@
         <h3>{{ playerName }} {{ playerName === gameState.current_player ? '(Active)' : '' }}</h3>
         <p>Faction: {{ player.faction ? player.faction.name : 'None' }}</p>
         <h4>Resources: {{ player.resources.length }}</h4>
+        <h4>Attached Resources: {{ player.attached_resources.length }}</h4>
         <h4>Hand:</h4>
         <ul>
           <li v-for="card in player.hand" :key="card.name">
             {{ card.name }} ({{ card.type }}, Cost: {{ card.cost }}, Threshold: {{ card.threshold }})
-            <button @click="playCard(playerName, card.name)" :disabled="playerName !== gameState.current_player || gameState.phase !== 'main'">Play</button>
+            <button 
+              @click="playCard(playerName, card.name)" 
+              :disabled="playerName !== gameState.current_player || gameState.phase !== 'main' || card.type === 'Resource'"
+            >
+              Play
+            </button>
           </li>
         </ul>
         <h4>In Play:</h4>
@@ -29,7 +35,12 @@
       </div>
       
       <div v-if="gameState.current_player === 'player1' || gameState.current_player === 'player2'">
-        <button @click="resetTurn" v-if="gameState.phase === 'start' && gameState.waiting_for_start_action">Reset Turn</button>
+        <button 
+          @click="resetTurn" 
+          v-if="gameState.phase === 'start' && gameState.waiting_for_start_action"
+        >
+          Reset Turn
+        </button>
         <div v-if="gameState.waiting_for_start_action">
           <button @click="chooseStartAction('draw')">Draw a Card</button>
           <button @click="chooseStartAction('resource')">Play a Resource</button>
@@ -38,9 +49,16 @@
           <h4>Select a card to play as resource:</h4>
           <ul>
             <li v-for="card in gameState.players[gameState.current_player].hand" :key="card.name">
-              {{ card.name }}
-              <button @click="playResource(card.name, true)">Play Face Up</button>
-              <button @click="playResource(card.name, false)">Play Face Down</button>
+              {{ card.name }} ({{ card.type }})
+              <button 
+                @click="playResource(card.name, true)" 
+                :disabled="card.type !== 'Resource'"
+              >
+                Play Face Up
+              </button>
+              <button @click="playResource(card.name, false)">
+                Play Face Down
+              </button>
             </li>
           </ul>
           <button @click="cancelResourceSelection">Cancel</button>
@@ -61,7 +79,7 @@ export default {
       backendStatus: 'Checking...',
       gameState: null,
       socket: null
-    }
+    };
   },
   mounted() {
     this.checkBackendStatus();
@@ -180,5 +198,5 @@ export default {
         .catch(error => console.error('Error:', error));
     }
   }
-}
+};
 </script>

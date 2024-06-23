@@ -39,11 +39,11 @@ def start_game():
     game_state = {
         "players": {
             "player1": {
-                "hand": [], "deck": [], "resources": [], "in_play": [],
+                "hand": [], "deck": [], "resources": [], "attached_resources": [], "in_play": [],
                 "discard": [], "removed": [], "faction": None
             },
             "player2": {
-                "hand": [], "deck": [], "resources": [], "in_play": [],
+                "hand": [], "deck": [], "resources": [], "attached_resources": [], "in_play": [],
                 "discard": [], "removed": [], "faction": None
             }
         },
@@ -82,6 +82,23 @@ def reset_turn():
 
     socketio.emit('game_update', game_state)
     return jsonify({"message": "Turn reset", "state": game_state})
+
+@app.route('/api/start_turn', methods=['POST'])
+def start_turn():
+    global game_state
+    current_player = game_state["current_player"]
+    player_state = game_state["players"][current_player]
+
+    # Detach all resources
+    player_state["resources"].extend(player_state["attached_resources"])
+    player_state["attached_resources"] = []
+
+    # Set waiting for start action
+    game_state["waiting_for_start_action"] = True
+    game_state["phase"] = "start"
+
+    socketio.emit('game_update', game_state)
+    return jsonify({"message": "Turn started", "state": game_state})
 
 @app.route('/api/choose_start_action', methods=['POST'])
 def choose_start_action():
@@ -127,6 +144,9 @@ def play_resource():
     if not card:
         return jsonify({"error": "Card not in hand"}), 400
 
+    if face_up and card["type"] != "Resource":
+        return jsonify({"error": "Only Resource cards can be played face-up as resources"}), 400
+
     player_state["hand"].remove(card)
     card["face_up"] = face_up
     player_state["resources"].append(card)
@@ -169,6 +189,9 @@ def play_card():
     if not card:
         return jsonify({"error": "Card not in hand"}), 400
     
+    if card["type"] == "Resource":
+        return jsonify({"error": "Cannot play Resource cards directly"}), 400
+    
     if len(player_state["resources"]) < card["cost"]:
         return jsonify({"error": "Not enough resources"}), 400
     
@@ -178,7 +201,7 @@ def play_card():
     # Pay the cost
     for _ in range(card["cost"]):
         resource = player_state["resources"].pop()
-        player_state["discard"].append(resource)
+        player_state["attached_resources"].append(resource)
     
     # Put card into play or resolve its effect
     if card["type"] in ["Character", "Item", "Location"]:
@@ -186,8 +209,6 @@ def play_card():
     elif card["type"] == "Tactic":
         player_state["discard"].append(card)
         # Resolve tactic effect here
-    elif card["type"] == "Resource":
-        player_state["resources"].append(card)
     
     socketio.emit('game_update', game_state)
     return jsonify({"message": f"Played card: {card_name}", "state": game_state})
