@@ -1,0 +1,82 @@
+Project Outline
+
+Creating an online client for The Spoils CCG similar to NetRunners Jinteki.net
+
+Development will take place on a linux distribution.
+Locally during development[using NixOS] and then on a service such a Linode when in production
+
+Needs: Backend? Hosting? Databases? How do I set up multiplayer 
+
+Frontent
+- Two player online gameplay with the option for spectators to watch games
+
+- Gameplay logic for each card to automate the play experience.
+    This should include
+        - Breaking card text down into keywords and involving these triggers into the gameplay flow.
+        - Cards should have images associated with them.
+        - Users should be able to log in and host games for others to join, as well as a selection of decks they have uploaded to their account in the form of a text document with "AMOUNT CARDNAME"
+        
+    Basic Gameplay
+        - Cards should be kept in the players: Deck, Hand, In play, Discard Pile or Removed From Play
+        Cards can enter play from hand 
+
+    Card Types
+        Characters, Items, Tactics, Locations and Resources
+        
+        Character - Stays in play until removed
+        - Cost(cost to play for the card to be played)
+        - Threshold(a requirement for the card to be played)
+        - Stats: Strength, Life and Speed 
+        - Extra cost(an extra requirement to fulfill in order to play the card)
+        - A text box with different effects that apply when the card enters or leaves play, a static effect or an activated/triggered abilities.
+        - Occasionally: Flip-up Cost and Threshold(alternative cost and threshold to play the card from a face-down position rather than from hand.
+
+        Items - Stays in play until removed
+        - Simimar to characters but don't have Stats.
+
+        Tactics - One-time effects that go do the discard pile after resolving
+        - Cost
+        - Threshold
+        - Extra costs
+        - Effects
+        - Occasionally: Flip-up and Threshold
+
+        Locations - Cards that stay in play after resolving, similar to Items and Characters
+        - Cost
+        - Threshold
+        - Extra costs
+        - Effets
+        - Occasionally: Flip-up and Threshold
+        - Structure(similar to Life, but does not restore to printed value at the end of turn)
+        
+        Resources
+         - Cards that provide threshold as well as occasional static rules or activated abilities
+         - Occasionally: Flip-up cost and threshold
+
+
+        General gameplay
+        - Resources are detached from each players faction card at the beginning of each turn unless specific effects cause them to remain attached.
+        - Players attach resources to their faction as a way of paying costs. A cost of one is payed by attaching a single resource, a cost of two requires two resources to be attached, etc.
+        - Players can't play cards unless their resources in play equal or exceed the threshold printed on the cards they want to play as well as paying costs as well as eventual extra costs
+        - Resources or other cards in play provide different threshold icons; Deception, Obsession, Rage, Elitism and Greed.
+        - Cards can be put into play face down as a resource that provides Volition, an alternative Threshold type, and can be attached to pay for costs similar to regular resources.
+        - Cards can have have abilities that require players to pay for costs in order to activate effects.
+        - Some cards require them to be DEPLETED as an additional cost. Attacking also cause characters to become DEPLETED, the same is true for blockers, but they DEPLETE after combat
+        
+        Combat
+            - A player can at any time during their turn use abilities, attack the opponents FACTION or LOCATIONS, or play cards from their DISCARD PILE, HAND, or FACE-DOWN resources if they have the FLIP-UP keyword
+            - When a player attacks a FACTION or LOCATION, their opponent can respond by playing cards, activating abilities or declaring blockers.
+                - If a blocker is declared, the turn player can respond by playing a card or activating abilities. If no player decides to do any of this, combat proceeds with cards with the hightest SPEED assigning damage to opposing CHARACTERS.
+                    After damage has been assigned, any player may resond with an ABILITY or TACTIC. If no player decides to play additional cards, damage is assigned to their targets according to how the player who controls the CHARACTER(S) with the 
+                    highest speed assigned the damage according to the STRENGTH of the CHARACTER(S). If the LIFE of the character that was assigned damage is equal to or lower than the assigned damage, it is destroyed and sent to the DISCARD PILE.
+                    Combat then proceeds with players going down a SPEED CLASS and assigning damage according to above loop, with the option to activate ABILITIES or TACtICS in between every step.
+                    Any character that is blocking and alive during the end of combat is then depleted. A CHARACTER that is DEPLETED during combat still assigns damage like normal, but a DEPLETED character can't block in response to an attack.
+                    Combat can be performed by individual CHARACTERS or in a PARTY, which bundles together characters into a band of attackers/blockers with a pool of damage to assign in the order of SPEED CLASS.
+                    If a character is blocked, no damage is dealt to target LOCATION or FACTION that was assigned at the beginning of COMBAT.
+
+
+        Actions
+            - Attacking
+            - Playing cards
+            - Using abilities
+            - Responding to opponents actions
