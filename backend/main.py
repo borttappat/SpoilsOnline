@@ -230,12 +230,78 @@ def end_turn():
     # Switch to next player
     game_state["current_player"] = "player2" if current_player == "player1" else "player1"
     game_state["turn"] += 1
+
+    # Start the next turn
+    new_current_player = game_state["current_player"]
+    new_player_state = game_state["players"][new_current_player]
+
+    # Detach all resources for the new player
+    new_player_state["resources"].extend(new_player_state["attached_resources"])
+    new_player_state["attached_resources"] = []
+
     game_state["phase"] = "start"
     game_state["waiting_for_start_action"] = True
     game_state["waiting_for_resource_selection"] = False
 
     socketio.emit('game_update', game_state)
-    return jsonify({"message": "Turn ended", "state": game_state})
+    return jsonify({"message": "Turn ended and new turn started", "state": game_state})
+
+@app.route('/api/draw_card', methods=['POST'])
+def draw_card():
+    global game_state
+    current_player = game_state["current_player"]
+    player_state = game_state["players"][current_player]
+
+    if len(player_state["resources"]) < 3:
+        return jsonify({"error": "Not enough resources to draw a card"}), 400
+
+    if not player_state["deck"]:
+        return jsonify({"error": "No cards left in the deck"}), 400
+
+    # Pay the cost
+    for _ in range(3):
+        resource = player_state["resources"].pop()
+        player_state["attached_resources"].append(resource)
+
+    # Draw a card
+    drawn_card = player_state["deck"].pop()
+    player_state["hand"].append(drawn_card)
+
+    socketio.emit('game_update', game_state)
+    return jsonify({"message": "Card drawn", "state": game_state})
+
+@app.route('/api/play_additional_resource', methods=['POST'])
+def play_additional_resource():
+    global game_state
+    data = request.json
+    card_name = data.get('card')
+    face_up = data.get('face_up', False)
+    
+    current_player = game_state["current_player"]
+    player_state = game_state["players"][current_player]
+
+    if len(player_state["resources"]) < 4:
+        return jsonify({"error": "Not enough resources to play additional resource"}), 400
+
+    card = next((c for c in player_state["hand"] if c["name"] == card_name), None)
+    if not card:
+        return jsonify({"error": "Card not in hand"}), 400
+
+    if face_up and card["type"] != "Resource":
+        return jsonify({"error": "Only Resource cards can be played face-up as resources"}), 400
+
+    # Pay the cost
+    for _ in range(4):
+        resource = player_state["resources"].pop()
+        player_state["attached_resources"].append(resource)
+
+    # Play the resource
+    player_state["hand"].remove(card)
+    card["face_up"] = face_up
+    player_state["resources"].append(card)
+
+    socketio.emit('game_update', game_state)
+    return jsonify({"message": f"Additional resource played: {card_name}", "state": game_state})
 
 @socketio.on('connect')
 def handle_connect():

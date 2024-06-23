@@ -35,12 +35,6 @@
       </div>
       
       <div v-if="gameState.current_player === 'player1' || gameState.current_player === 'player2'">
-        <button 
-          @click="resetTurn" 
-          v-if="gameState.phase === 'start' && gameState.waiting_for_start_action"
-        >
-          Reset Turn
-        </button>
         <div v-if="gameState.waiting_for_start_action">
           <button @click="chooseStartAction('draw')">Draw a Card</button>
           <button @click="chooseStartAction('resource')">Play a Resource</button>
@@ -63,7 +57,32 @@
           </ul>
           <button @click="cancelResourceSelection">Cancel</button>
         </div>
-        <button @click="endTurn" v-if="gameState.phase === 'main'">End Turn</button>
+        <div v-if="gameState.phase === 'main'">
+          <h4>Additional Actions:</h4>
+          <button @click="drawCard" :disabled="gameState.players[gameState.current_player].resources.length < 3">
+            Draw a Card (Cost: 3)
+          </button>
+          <button @click="initiateAdditionalResource" :disabled="gameState.players[gameState.current_player].resources.length < 4">
+            Play Additional Resource (Cost: 4)
+          </button>
+          <button @click="endTurn">End Turn</button>
+        </div>
+
+        <div v-if="selectingAdditionalResource">
+          <h4>Select a card to play as additional resource:</h4>
+          <ul>
+            <li v-for="card in gameState.players[gameState.current_player].hand" :key="card.name">
+              {{ card.name }} ({{ card.type }})
+              <button @click="playAdditionalResource(card.name, true)" :disabled="card.type !== 'Resource'">
+                Play Face Up
+              </button>
+              <button @click="playAdditionalResource(card.name, false)">
+                Play Face Down
+              </button>
+            </li>
+          </ul>
+          <button @click="cancelAdditionalResource">Cancel</button>
+        </div>
       </div>
     </div>
   </div>
@@ -78,7 +97,8 @@ export default {
     return {
       backendStatus: 'Checking...',
       gameState: null,
-      socket: null
+      socket: null,
+      selectingAdditionalResource: false
     };
   },
   mounted() {
@@ -108,18 +128,6 @@ export default {
         .then(response => response.json())
         .then(data => {
           this.gameState = data.state;
-        })
-        .catch(error => console.error('Error:', error));
-    },
-    resetTurn() {
-      fetch('http://localhost:5000/api/reset_turn', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-          if (data.error) {
-            console.error(data.error);
-          } else {
-            this.gameState = data.state;
-          }
         })
         .catch(error => console.error('Error:', error));
     },
@@ -196,6 +204,43 @@ export default {
           this.gameState = data.state;
         })
         .catch(error => console.error('Error:', error));
+    },
+    drawCard() {
+      fetch('http://localhost:5000/api/draw_card', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            console.error(data.error);
+          } else {
+            this.gameState = data.state;
+          }
+        })
+        .catch(error => console.error('Error:', error));
+    },
+    initiateAdditionalResource() {
+      this.selectingAdditionalResource = true;
+    },
+    playAdditionalResource(cardName, faceUp) {
+      fetch('http://localhost:5000/api/play_additional_resource', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ card: cardName, face_up: faceUp }),
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            console.error(data.error);
+          } else {
+            this.gameState = data.state;
+            this.selectingAdditionalResource = false;
+          }
+        })
+        .catch(error => console.error('Error:', error));
+    },
+    cancelAdditionalResource() {
+      this.selectingAdditionalResource = false;
     }
   }
 };
