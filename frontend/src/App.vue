@@ -4,86 +4,101 @@
     <p>Backend status: {{ backendStatus }}</p>
     <button @click="startGame" :disabled="gameState !== null">Start Game</button>
     
-    <div v-if="gameState">
-      <h2>Turn: {{ gameState.turn }} | Current Player: {{ gameState.current_player }} | Phase: {{ gameState.phase }}</h2>
-      
-      <div v-for="(player, playerName) in gameState.players" :key="playerName">
-        <h3>{{ playerName }} {{ playerName === gameState.current_player ? '(Active)' : '' }}</h3>
-        <p>Faction: {{ player.faction ? player.faction.name : 'None' }}</p>
-        <h4>Resources: {{ player.resources.length }}</h4>
-        <h4>Attached Resources: {{ player.attached_resources.length }}</h4>
-        <h4>Hand:</h4>
-        <ul>
-          <li v-for="card in player.hand" :key="card.name">
-            {{ card.name }} ({{ card.type }}, Cost: {{ card.cost }}, Threshold: {{ card.threshold }})
-            <button 
-              @click="playCard(playerName, card.name)" 
-              :disabled="playerName !== gameState.current_player || gameState.phase !== 'main' || card.type === 'Resource'"
-            >
-              Play
-            </button>
-          </li>
-        </ul>
-        <h4>In Play:</h4>
-        <ul>
-          <li v-for="card in player.in_play" :key="card.name">
-            {{ card.name }} ({{ card.type }})
-          </li>
-        </ul>
-        <h4>Discard Pile: {{ player.discard.length }} cards</h4>
-        <h4>Removed from Game: {{ player.removed.length }} cards</h4>
-      </div>
-      
-      <div v-if="gameState.current_player === 'player1' || gameState.current_player === 'player2'">
-        <div v-if="gameState.waiting_for_start_action">
-          <button @click="chooseStartAction('draw')">Draw a Card</button>
-          <button @click="chooseStartAction('resource')">Play a Resource</button>
+    <div v-if="gameState" class="game-container">
+      <div v-for="playerName in ['player1', 'player2']" :key="playerName" class="player-side">
+        <h2>{{ playerName }} {{ playerName === gameState.current_player ? '(Active)' : '' }}</h2>
+        <p>Turn: {{ gameState.turn }} | Phase: {{ gameState.phase }}</p>
+        <p>Faction: {{ gameState.players[playerName].faction ? gameState.players[playerName].faction.name : 'None' }}</p>
+        
+        <div>
+          <h3>Resources: {{ gameState.players[playerName].resources.length }}</h3>
+          <h3>Attached Resources: {{ gameState.players[playerName].attached_resources.length }}</h3>
         </div>
-        <div v-if="gameState.waiting_for_resource_selection">
-          <h4>Select a card to play as resource:</h4>
+        
+        <div>
+          <h3>Hand:</h3>
           <ul>
-            <li v-for="card in gameState.players[gameState.current_player].hand" :key="card.name">
-              {{ card.name }} ({{ card.type }})
+            <li v-for="card in gameState.players[playerName].hand" :key="card.name">
+              {{ card.name }} ({{ card.type }}, Cost: {{ card.cost }}, Threshold: {{ card.threshold }})
               <button 
-                @click="playResource(card.name, true)" 
-                :disabled="card.type !== 'Resource'"
+                @click="playCard(playerName, card.name)" 
+                :disabled="playerName !== gameState.active_player || 
+                           (gameState.current_player !== playerName && 
+                            card.type !== 'Tactic' && 
+                            !card.keywords.includes('TACTICAL'))"
               >
-                Play Face Up
-              </button>
-              <button @click="playResource(card.name, false)">
-                Play Face Down
+                Play
               </button>
             </li>
           </ul>
-          <button @click="cancelResourceSelection">Cancel</button>
         </div>
-        <div v-if="gameState.phase === 'main'">
-          <h4>Additional Actions:</h4>
-          <button @click="drawCard" :disabled="gameState.players[gameState.current_player].resources.length < 3">
-            Draw a Card (Cost: 3)
-          </button>
-          <button @click="initiateAdditionalResource" :disabled="gameState.players[gameState.current_player].resources.length < 4">
-            Play Additional Resource (Cost: 4)
-          </button>
-          <button @click="endTurn">End Turn</button>
-        </div>
-
-        <div v-if="selectingAdditionalResource">
-          <h4>Select a card to play as additional resource:</h4>
+        
+        <div>
+          <h3>In Play:</h3>
           <ul>
-            <li v-for="card in gameState.players[gameState.current_player].hand" :key="card.name">
+            <li v-for="card in gameState.players[playerName].in_play" :key="card.name">
               {{ card.name }} ({{ card.type }})
-              <button @click="playAdditionalResource(card.name, true)" :disabled="card.type !== 'Resource'">
-                Play Face Up
-              </button>
-              <button @click="playAdditionalResource(card.name, false)">
-                Play Face Down
-              </button>
             </li>
           </ul>
-          <button @click="cancelAdditionalResource">Cancel</button>
+        </div>
+        
+        <div>
+          <h3>Discard Pile: {{ gameState.players[playerName].discard.length }} cards</h3>
+          <h3>Removed from Game: {{ gameState.players[playerName].removed.length }} cards</h3>
+        </div>
+        
+        <div v-if="gameState.current_player === playerName">
+          <div v-if="gameState.waiting_for_start_action">
+            <button @click="chooseStartAction('draw')">Draw a Card</button>
+            <button @click="chooseStartAction('resource')">Play a Resource</button>
+          </div>
+          
+          <div v-if="gameState.waiting_for_resource_selection">
+            <h4>Select a card to play as resource:</h4>
+            <ul>
+              <li v-for="card in gameState.players[playerName].hand" :key="card.name">
+                {{ card.name }} ({{ card.type }})
+                <button 
+                  @click="playResource(card.name, true)" 
+                  :disabled="card.type !== 'Resource'"
+                >
+                  Play Face Up
+                </button>
+                <button @click="playResource(card.name, false)">
+                  Play Face Down
+                </button>
+              </li>
+            </ul>
+            <button @click="cancelResourceSelection">Cancel</button>
+          </div>
+          
+          <div v-if="gameState.phase === 'main'">
+            <h4>Additional Actions:</h4>
+            <button @click="drawCard" :disabled="gameState.players[playerName].resources.length < 3">
+              Draw a Card (Cost: 3)
+            </button>
+            <button @click="initiateAdditionalResource" :disabled="gameState.players[playerName].resources.length < 4">
+              Play Additional Resource (Cost: 4)
+            </button>
+            <button @click="endTurn" :disabled="gameState.waiting_for_response">End Turn</button>
+          </div>
+        </div>
+        
+        <div v-if="gameState.waiting_for_response && gameState.active_player === playerName">
+          <h3>Respond to Action</h3>
+          <button @click="respond('NO_RESPONSE')">No Response</button>
+          <button @click="respond('RESPONSE')">Respond</button>
         </div>
       </div>
+    </div>
+    
+    <div v-if="gameState && gameState.action_stack.length > 0">
+      <h3>Action Stack:</h3>
+      <ul>
+        <li v-for="(action, index) in gameState.action_stack" :key="index">
+          {{ action.type }} by {{ action.player }}: {{ action.card ? action.card.name : 'N/A' }}
+        </li>
+      </ul>
     </div>
   </div>
 </template>
@@ -241,7 +256,39 @@ export default {
     },
     cancelAdditionalResource() {
       this.selectingAdditionalResource = false;
+    },
+    respond(response) {
+      fetch('http://localhost:5000/api/respond', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ player: this.gameState.active_player, response }),
+      })
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            console.error(data.error);
+          } else {
+            this.gameState = data.state;
+          }
+        })
+        .catch(error => console.error('Error:', error));
     }
   }
 };
 </script>
+
+<style scoped>
+.game-container {
+  display: flex;
+  justify-content: space-between;
+}
+
+.player-side {
+  width: 48%;
+  border: 1px solid #ccc;
+  padding: 10px;
+  margin: 10px 0;
+}
+</style>

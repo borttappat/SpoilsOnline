@@ -19,7 +19,8 @@ def create_card(name, card_type):
         "name": name,
         "type": card_type,
         "cost": random.randint(0, 3),
-        "threshold": random.choice(THRESHOLDS)
+        "threshold": random.choice(THRESHOLDS),
+        "keywords": []  # Add keywords here if needed
     }
 
 def create_faction_card(name):
@@ -48,10 +49,13 @@ def start_game():
             }
         },
         "current_player": "player1",
+        "active_player": "player1",
         "turn": 1,
         "phase": "start",
         "waiting_for_start_action": True,
-        "waiting_for_resource_selection": False
+        "waiting_for_resource_selection": False,
+        "action_stack": [],
+        "waiting_for_response": False
     }
     
     # Reset game state
@@ -63,7 +67,7 @@ def start_game():
         game_state["players"][player]["hand"] = [game_state["players"][player]["deck"].pop() for _ in range(5)]
         game_state["players"][player]["faction"] = create_faction_card(f"{player} Faction")
     
-    socketio.emit('game_update', game_state)
+    emit_game_update()
     return jsonify({"message": "Game started", "state": game_state})
 
 @app.route('/api/reset_turn', methods=['POST'])
@@ -80,7 +84,7 @@ def reset_turn():
     game_state["waiting_for_resource_selection"] = False
     game_state["phase"] = "start"
 
-    socketio.emit('game_update', game_state)
+    emit_game_update()
     return jsonify({"message": "Turn reset", "state": game_state})
 
 @app.route('/api/start_turn', methods=['POST'])
@@ -97,7 +101,7 @@ def start_turn():
     game_state["waiting_for_start_action"] = True
     game_state["phase"] = "start"
 
-    socketio.emit('game_update', game_state)
+    emit_game_update()
     return jsonify({"message": "Turn started", "state": game_state})
 
 @app.route('/api/choose_start_action', methods=['POST'])
@@ -124,7 +128,7 @@ def choose_start_action():
     else:
         return jsonify({"error": "Invalid action"}), 400
 
-    socketio.emit('game_update', game_state)
+    emit_game_update()
     return jsonify({"message": f"Performed start action: {action}", "state": game_state})
 
 @app.route('/api/play_resource', methods=['POST'])
@@ -154,7 +158,7 @@ def play_resource():
     game_state["waiting_for_resource_selection"] = False
     game_state["phase"] = "main"
 
-    socketio.emit('game_update', game_state)
+    emit_game_update()
     return jsonify({"message": f"Played resource: {card_name}", "state": game_state})
 
 @app.route('/api/cancel_resource_selection', methods=['POST'])
@@ -167,7 +171,7 @@ def cancel_resource_selection():
     game_state["waiting_for_resource_selection"] = False
     game_state["waiting_for_start_action"] = True
 
-    socketio.emit('game_update', game_state)
+    emit_game_update()
     return jsonify({"message": "Resource selection cancelled", "state": game_state})
 
 @app.route('/api/play_card', methods=['POST'])
@@ -177,11 +181,8 @@ def play_card():
     player = data.get('player')
     card_name = data.get('card')
     
-    if player != game_state["current_player"]:
-        return jsonify({"error": "Not your turn"}), 400
-    
-    if game_state["phase"] != "main":
-        return jsonify({"error": "You can only play cards during the main phase"}), 400
+    if player != game_state["active_player"]:
+        return jsonify({"error": "Not your turn to act"}), 400
     
     player_state = game_state["players"][player]
     card = next((c for c in player_state["hand"] if c["name"] == card_name), None)
@@ -189,62 +190,37 @@ def play_card():
     if not card:
         return jsonify({"error": "Card not in hand"}), 400
     
-    if card["type"] == "Resource":
-        return jsonify({"error": "Cannot play Resource cards directly"}), 400
+    if game_state["current_player"] != player:
+        if card["type"] not in ["Tactic"] and "TACTICAL" not in card.get("keywords", []):
+            return jsonify({"error": "Cannot play this card type during opponent's turn"}), 400
     
     if len(player_state["resources"]) < card["cost"]:
         return jsonify({"error": "Not enough resources"}), 400
     
-    # Remove card from hand
-    player_state["hand"].remove(card)
+    game_state["action_stack"].append({"type": "play_card", "player": player, "card": card})
+    game_state["active_player"] = "player2" if player == "player1" else "player1"
+    game_state["waiting_for_response"] = True
     
-    # Pay the cost
-    for _ in range(card["cost"]):
-        resource = player_state["resources"].pop()
-        player_state["attached_resources"].append(resource)
-    
-    # Put card into play or resolve its effect
-    if card["type"] in ["Character", "Item", "Location"]:
-        player_state["in_play"].append(card)
-    elif card["type"] == "Tactic":
-        player_state["discard"].append(card)
-        # Resolve tactic effect here
-    
-    socketio.emit('game_update', game_state)
-    return jsonify({"message": f"Played card: {card_name}", "state": game_state})
+    emit_game_update()
+    return jsonify({"message": f"Card {card_name} added to stack", "state": game_state})
 
 @app.route('/api/end_turn', methods=['POST'])
 def end_turn():
     global game_state
     current_player = game_state["current_player"]
-    player_state = game_state["players"][current_player]
+    
+    if current_player != game_state["active_player"]:
+        return jsonify({"error": "Not your turn to end"}), 400
 
-    # TODO: Resolve "at the end of your turn" effects
+    # Add an "end turn" action to the stack
+    game_state["action_stack"].append({"type": "end_turn", "player": current_player})
+    
+    # Switch active player to allow for response
+    game_state["active_player"] = "player2" if current_player == "player1" else "player1"
+    game_state["waiting_for_response"] = True
 
-    # Discard down to maximum hand size
-    max_hand_size = 7
-    while len(player_state["hand"]) > max_hand_size:
-        discarded_card = player_state["hand"].pop()
-        player_state["discard"].append(discarded_card)
-
-    # Switch to next player
-    game_state["current_player"] = "player2" if current_player == "player1" else "player1"
-    game_state["turn"] += 1
-
-    # Start the next turn
-    new_current_player = game_state["current_player"]
-    new_player_state = game_state["players"][new_current_player]
-
-    # Detach all resources for the new player
-    new_player_state["resources"].extend(new_player_state["attached_resources"])
-    new_player_state["attached_resources"] = []
-
-    game_state["phase"] = "start"
-    game_state["waiting_for_start_action"] = True
-    game_state["waiting_for_resource_selection"] = False
-
-    socketio.emit('game_update', game_state)
-    return jsonify({"message": "Turn ended and new turn started", "state": game_state})
+    emit_game_update()
+    return jsonify({"message": "Turn ending, waiting for response", "state": game_state})
 
 @app.route('/api/draw_card', methods=['POST'])
 def draw_card():
@@ -255,8 +231,24 @@ def draw_card():
     if len(player_state["resources"]) < 3:
         return jsonify({"error": "Not enough resources to draw a card"}), 400
 
-    if not player_state["deck"]:
-        return jsonify({"error": "No cards left in the deck"}), 400
+    # Add the draw card action to the stack
+    game_state["action_stack"].append({"type": "draw_card", "player": current_player})
+    
+    # Switch active player to allow for response
+    game_state["active_player"] = "player2" if current_player == "player1" else "player1"
+    game_state["waiting_for_response"] = True
+
+    emit_game_update()
+    return jsonify({"message": "Draw card action added to stack", "state": game_state})
+
+def resolve_draw_card(action):
+    global game_state
+    player = action["player"]
+    player_state = game_state["players"][player]
+
+    if len(player_state["resources"]) < 3:
+        print(f"Error: {player} doesn't have enough resources to draw a card")
+        return
 
     # Pay the cost
     for _ in range(3):
@@ -264,11 +256,27 @@ def draw_card():
         player_state["attached_resources"].append(resource)
 
     # Draw a card
-    drawn_card = player_state["deck"].pop()
-    player_state["hand"].append(drawn_card)
+    if player_state["deck"]:
+        drawn_card = player_state["deck"].pop()
+        player_state["hand"].append(drawn_card)
+        print(f"{player} drew a card")
+    else:
+        print(f"{player} has no cards left in the deck")
 
-    socketio.emit('game_update', game_state)
-    return jsonify({"message": "Card drawn", "state": game_state})
+# Update resolve_action_stack function
+def resolve_action_stack():
+    global game_state
+    while game_state["action_stack"]:
+        action = game_state["action_stack"].pop(0)
+        if action["type"] == "play_card":
+            resolve_play_card(action)
+        elif action["type"] == "end_turn":
+            resolve_end_turn(action)
+        elif action["type"] == "draw_card":
+            resolve_draw_card(action)
+    game_state["waiting_for_response"] = False
+    game_state["active_player"] = game_state["current_player"]
+    emit_game_update()
 
 @app.route('/api/play_additional_resource', methods=['POST'])
 def play_additional_resource():
@@ -300,8 +308,106 @@ def play_additional_resource():
     card["face_up"] = face_up
     player_state["resources"].append(card)
 
-    socketio.emit('game_update', game_state)
+    emit_game_update()
     return jsonify({"message": f"Additional resource played: {card_name}", "state": game_state})
+
+@app.route('/api/respond', methods=['POST'])
+def respond():
+    global game_state
+    data = request.json
+    player = data.get('player')
+    response = data.get('response')
+    
+    if player != game_state["active_player"]:
+        return jsonify({"error": "Not your turn to respond"}), 400
+    
+    if response == "NO_RESPONSE":
+        resolve_action_stack()
+    elif response == "RESPONSE":
+        game_state["waiting_for_response"] = True
+        # The client should follow up with a play_card request
+    else:
+        return jsonify({"error": "Invalid response"}), 400
+    
+    emit_game_update()
+    return jsonify({"message": "Response processed", "state": game_state})
+
+def resolve_action_stack():
+    global game_state
+    while game_state["action_stack"]:
+        action = game_state["action_stack"].pop(0)
+        if action["type"] == "play_card":
+            resolve_play_card(action)
+        elif action["type"] == "end_turn":
+            resolve_end_turn(action)
+    game_state["waiting_for_response"] = False
+    game_state["active_player"] = game_state["current_player"]
+    emit_game_update()
+
+def resolve_play_card(action):
+    global game_state
+    player = action["player"]
+    card = action["card"]
+    player_state = game_state["players"][player]
+    
+    # Remove card from hand if it's still there
+    if any(c["name"] == card["name"] for c in player_state["hand"]):
+        player_state["hand"] = [c for c in player_state["hand"] if c["name"] != card["name"]]
+    
+    # Pay the cost
+    for _ in range(card["cost"]):
+        if player_state["resources"]:
+            resource = player_state["resources"].pop()
+            player_state["attached_resources"].append(resource)
+    
+    # Put card into play or resolve its effect
+    if card["type"] in ["Character", "Item", "Location"]:
+        player_state["in_play"].append(card)
+    elif card["type"] == "Tactic":
+        player_state["discard"].append(card)
+        # Resolve tactic effect here
+    elif card["type"] == "Resource":
+        player_state["resources"].append(card)
+    
+    print(f"Card {card['name']} resolved for {player}")
+
+def resolve_end_turn(action):
+    global game_state
+    current_player = action["player"]
+    player_state = game_state["players"][current_player]
+
+    # TODO: Resolve "at the end of your turn" effects
+
+    # Discard down to maximum hand size
+    max_hand_size = 7
+    while len(player_state["hand"]) > max_hand_size:
+        discarded_card = player_state["hand"].pop()
+        player_state["discard"].append(discarded_card)
+
+    # Switch to next player
+    game_state["current_player"] = "player2" if current_player == "player1" else "player1"
+    game_state["turn"] += 1
+
+    # Start the next turn
+    new_current_player = game_state["current_player"]
+    new_player_state = game_state["players"][new_current_player]
+
+    # Detach all resources for the new player
+    new_player_state["resources"].extend(new_player_state["attached_resources"])
+    new_player_state["attached_resources"] = []
+
+    game_state["phase"] = "start"
+    game_state["waiting_for_start_action"] = True
+    game_state["waiting_for_resource_selection"] = False
+    game_state["active_player"] = new_current_player
+
+    print(f"Turn ended for {current_player}, new turn started for {new_current_player}")
+
+def emit_game_update():
+    global game_state
+    # Create a copy of the game state with the action stack as a list
+    emitted_state = {**game_state, 'action_stack': list(game_state['action_stack'])}
+    socketio.emit('game_update', emitted_state)
 
 @socketio.on('connect')
 def handle_connect():
