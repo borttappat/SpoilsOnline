@@ -163,7 +163,18 @@ def play_card():
     if len(player_state["resources"]) < card["cost"]:
         return jsonify({"error": "Not enough resources"}), 400
     
+    # Pay the cost immediately
+    for _ in range(card["cost"]):
+        resource = player_state["resources"].pop()
+        player_state["attached_resources"].append(resource)
+    
+    # Remove card from hand
+    player_state["hand"].remove(card)
+    
+    # Add the play card action to the stack
     game_state["action_stack"].append({"type": "play_card", "player": player, "card": card})
+    
+    # Switch active player to allow for response
     game_state["active_player"] = "player2" if player == "player1" else "player1"
     game_state["waiting_for_response"] = True
     
@@ -191,21 +202,17 @@ def end_turn():
 @app.route('/api/draw_card', methods=['POST'])
 def draw_card():
     global game_state
-    if not request.is_json:
-        return jsonify({"error": "Request must be JSON"}), 415
-    
-    data = request.get_json()
+    data = request.json
     player = data.get('player')
-    
-    if not player:
-        return jsonify({"error": "Player not specified"}), 400
-    
-    print(f"Received draw_card request for player: {player}")
     player_state = game_state["players"][player]
 
     if len(player_state["resources"]) < 3:
-        print(f"Not enough resources to draw a card for {player}")
         return jsonify({"error": "Not enough resources to draw a card"}), 400
+
+    # Pay the cost immediately
+    for _ in range(3):
+        resource = player_state["resources"].pop()
+        player_state["attached_resources"].append(resource)
 
     # Add the draw card action to the stack
     game_state["action_stack"].append({"type": "draw_card", "player": player})
@@ -214,7 +221,6 @@ def draw_card():
     game_state["active_player"] = "player2" if player == "player1" else "player1"
     game_state["waiting_for_response"] = True
 
-    print(f"Draw card action added to stack for {player}")
     emit_game_update()
     return jsonify({"message": "Draw card action added to stack", "state": game_state})
 
@@ -226,21 +232,25 @@ def play_additional_resource():
     card_name = data.get('card')
     face_up = data.get('face_up', False)
     
-    print(f"Received play_additional_resource request for player: {player}")  # Add this line
     player_state = game_state["players"][player]
 
     if len(player_state["resources"]) < 4:
-        print(f"Not enough resources to play additional resource for {player}")  # Add this line
         return jsonify({"error": "Not enough resources to play additional resource"}), 400
 
     card = next((c for c in player_state["hand"] if c["name"] == card_name), None)
     if not card:
-        print(f"Card {card_name} not found in hand for {player}")  # Add this line
         return jsonify({"error": "Card not in hand"}), 400
 
     if face_up and card["type"] != "Resource":
-        print(f"Attempted to play non-Resource card face-up as resource for {player}")  # Add this line
         return jsonify({"error": "Only Resource cards can be played face-up as resources"}), 400
+
+    # Pay the cost immediately
+    for _ in range(4):
+        resource = player_state["resources"].pop()
+        player_state["attached_resources"].append(resource)
+
+    # Remove card from hand
+    player_state["hand"].remove(card)
 
     # Add the play additional resource action to the stack
     game_state["action_stack"].append({"type": "play_additional_resource", "player": player, "card": card, "face_up": face_up})
@@ -249,7 +259,6 @@ def play_additional_resource():
     game_state["active_player"] = "player2" if player == "player1" else "player1"
     game_state["waiting_for_response"] = True
 
-    print(f"Play additional resource action added to stack for {player}")  # Add this line
     emit_game_update()
     return jsonify({"message": "Play additional resource action added to stack", "state": game_state})
 
@@ -295,16 +304,6 @@ def resolve_play_card(action):
     player = action["player"]
     card = action["card"]
     player_state = game_state["players"][player]
-    
-    # Remove card from hand if it's still there
-    if any(c["name"] == card["name"] for c in player_state["hand"]):
-        player_state["hand"] = [c for c in player_state["hand"] if c["name"] != card["name"]]
-    
-    # Pay the cost
-    for _ in range(card["cost"]):
-        if player_state["resources"]:
-            resource = player_state["resources"].pop()
-            player_state["attached_resources"].append(resource)
     
     # Put card into play or resolve its effect
     if card["type"] in ["Character", "Item", "Location"]:
@@ -354,15 +353,6 @@ def resolve_draw_card(action):
     player = action["player"]
     player_state = game_state["players"][player]
 
-    if len(player_state["resources"]) < 3:
-        print(f"Error: {player} doesn't have enough resources to draw a card")
-        return
-
-    # Pay the cost
-    for _ in range(3):
-        resource = player_state["resources"].pop()
-        player_state["attached_resources"].append(resource)
-
     # Draw a card
     if player_state["deck"]:
         drawn_card = player_state["deck"].pop()
@@ -378,17 +368,7 @@ def resolve_play_additional_resource(action):
     face_up = action["face_up"]
     player_state = game_state["players"][player]
 
-    if len(player_state["resources"]) < 4:
-        print(f"Error: {player} doesn't have enough resources to play additional resource")
-        return
-
-    # Pay the cost
-    for _ in range(4):
-        resource = player_state["resources"].pop()
-        player_state["attached_resources"].append(resource)
-
     # Play the resource
-    player_state["hand"].remove(card)
     card["face_up"] = face_up
     player_state["resources"].append(card)
 
