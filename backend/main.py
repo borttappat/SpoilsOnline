@@ -70,40 +70,6 @@ def start_game():
     emit_game_update()
     return jsonify({"message": "Game started", "state": game_state})
 
-@app.route('/api/reset_turn', methods=['POST'])
-def reset_turn():
-    global game_state
-    current_player = game_state["current_player"]
-    player_state = game_state["players"][current_player]
-
-    if game_state["phase"] != "start" or not game_state["waiting_for_start_action"]:
-        return jsonify({"error": "Can only reset at the start of a turn"}), 400
-
-    # Reset turn state
-    game_state["waiting_for_start_action"] = True
-    game_state["waiting_for_resource_selection"] = False
-    game_state["phase"] = "start"
-
-    emit_game_update()
-    return jsonify({"message": "Turn reset", "state": game_state})
-
-@app.route('/api/start_turn', methods=['POST'])
-def start_turn():
-    global game_state
-    current_player = game_state["current_player"]
-    player_state = game_state["players"][current_player]
-
-    # Detach all resources
-    player_state["resources"].extend(player_state["attached_resources"])
-    player_state["attached_resources"] = []
-
-    # Set waiting for start action
-    game_state["waiting_for_start_action"] = True
-    game_state["phase"] = "start"
-
-    emit_game_update()
-    return jsonify({"message": "Turn started", "state": game_state})
-
 @app.route('/api/choose_start_action', methods=['POST'])
 def choose_start_action():
     global game_state
@@ -225,91 +191,67 @@ def end_turn():
 @app.route('/api/draw_card', methods=['POST'])
 def draw_card():
     global game_state
-    current_player = game_state["current_player"]
-    player_state = game_state["players"][current_player]
-
-    if len(player_state["resources"]) < 3:
-        return jsonify({"error": "Not enough resources to draw a card"}), 400
-
-    # Add the draw card action to the stack
-    game_state["action_stack"].append({"type": "draw_card", "player": current_player})
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 415
     
-    # Switch active player to allow for response
-    game_state["active_player"] = "player2" if current_player == "player1" else "player1"
-    game_state["waiting_for_response"] = True
-
-    emit_game_update()
-    return jsonify({"message": "Draw card action added to stack", "state": game_state})
-
-def resolve_draw_card(action):
-    global game_state
-    player = action["player"]
+    data = request.get_json()
+    player = data.get('player')
+    
+    if not player:
+        return jsonify({"error": "Player not specified"}), 400
+    
+    print(f"Received draw_card request for player: {player}")
     player_state = game_state["players"][player]
 
     if len(player_state["resources"]) < 3:
-        print(f"Error: {player} doesn't have enough resources to draw a card")
-        return
+        print(f"Not enough resources to draw a card for {player}")
+        return jsonify({"error": "Not enough resources to draw a card"}), 400
 
-    # Pay the cost
-    for _ in range(3):
-        resource = player_state["resources"].pop()
-        player_state["attached_resources"].append(resource)
+    # Add the draw card action to the stack
+    game_state["action_stack"].append({"type": "draw_card", "player": player})
+    
+    # Switch active player to allow for response
+    game_state["active_player"] = "player2" if player == "player1" else "player1"
+    game_state["waiting_for_response"] = True
 
-    # Draw a card
-    if player_state["deck"]:
-        drawn_card = player_state["deck"].pop()
-        player_state["hand"].append(drawn_card)
-        print(f"{player} drew a card")
-    else:
-        print(f"{player} has no cards left in the deck")
-
-# Update resolve_action_stack function
-def resolve_action_stack():
-    global game_state
-    while game_state["action_stack"]:
-        action = game_state["action_stack"].pop(0)
-        if action["type"] == "play_card":
-            resolve_play_card(action)
-        elif action["type"] == "end_turn":
-            resolve_end_turn(action)
-        elif action["type"] == "draw_card":
-            resolve_draw_card(action)
-    game_state["waiting_for_response"] = False
-    game_state["active_player"] = game_state["current_player"]
+    print(f"Draw card action added to stack for {player}")
     emit_game_update()
+    return jsonify({"message": "Draw card action added to stack", "state": game_state})
 
 @app.route('/api/play_additional_resource', methods=['POST'])
 def play_additional_resource():
     global game_state
     data = request.json
+    player = data.get('player')
     card_name = data.get('card')
     face_up = data.get('face_up', False)
     
-    current_player = game_state["current_player"]
-    player_state = game_state["players"][current_player]
+    print(f"Received play_additional_resource request for player: {player}")  # Add this line
+    player_state = game_state["players"][player]
 
     if len(player_state["resources"]) < 4:
+        print(f"Not enough resources to play additional resource for {player}")  # Add this line
         return jsonify({"error": "Not enough resources to play additional resource"}), 400
 
     card = next((c for c in player_state["hand"] if c["name"] == card_name), None)
     if not card:
+        print(f"Card {card_name} not found in hand for {player}")  # Add this line
         return jsonify({"error": "Card not in hand"}), 400
 
     if face_up and card["type"] != "Resource":
+        print(f"Attempted to play non-Resource card face-up as resource for {player}")  # Add this line
         return jsonify({"error": "Only Resource cards can be played face-up as resources"}), 400
 
-    # Pay the cost
-    for _ in range(4):
-        resource = player_state["resources"].pop()
-        player_state["attached_resources"].append(resource)
+    # Add the play additional resource action to the stack
+    game_state["action_stack"].append({"type": "play_additional_resource", "player": player, "card": card, "face_up": face_up})
+    
+    # Switch active player to allow for response
+    game_state["active_player"] = "player2" if player == "player1" else "player1"
+    game_state["waiting_for_response"] = True
 
-    # Play the resource
-    player_state["hand"].remove(card)
-    card["face_up"] = face_up
-    player_state["resources"].append(card)
-
+    print(f"Play additional resource action added to stack for {player}")  # Add this line
     emit_game_update()
-    return jsonify({"message": f"Additional resource played: {card_name}", "state": game_state})
+    return jsonify({"message": "Play additional resource action added to stack", "state": game_state})
 
 @app.route('/api/respond', methods=['POST'])
 def respond():
@@ -340,6 +282,10 @@ def resolve_action_stack():
             resolve_play_card(action)
         elif action["type"] == "end_turn":
             resolve_end_turn(action)
+        elif action["type"] == "draw_card":
+            resolve_draw_card(action)
+        elif action["type"] == "play_additional_resource":
+            resolve_play_additional_resource(action)
     game_state["waiting_for_response"] = False
     game_state["active_player"] = game_state["current_player"]
     emit_game_update()
@@ -402,6 +348,51 @@ def resolve_end_turn(action):
     game_state["active_player"] = new_current_player
 
     print(f"Turn ended for {current_player}, new turn started for {new_current_player}")
+
+def resolve_draw_card(action):
+    global game_state
+    player = action["player"]
+    player_state = game_state["players"][player]
+
+    if len(player_state["resources"]) < 3:
+        print(f"Error: {player} doesn't have enough resources to draw a card")
+        return
+
+    # Pay the cost
+    for _ in range(3):
+        resource = player_state["resources"].pop()
+        player_state["attached_resources"].append(resource)
+
+    # Draw a card
+    if player_state["deck"]:
+        drawn_card = player_state["deck"].pop()
+        player_state["hand"].append(drawn_card)
+        print(f"{player} drew a card")
+    else:
+        print(f"{player} has no cards left in the deck")
+
+def resolve_play_additional_resource(action):
+    global game_state
+    player = action["player"]
+    card = action["card"]
+    face_up = action["face_up"]
+    player_state = game_state["players"][player]
+
+    if len(player_state["resources"]) < 4:
+        print(f"Error: {player} doesn't have enough resources to play additional resource")
+        return
+
+    # Pay the cost
+    for _ in range(4):
+        resource = player_state["resources"].pop()
+        player_state["attached_resources"].append(resource)
+
+    # Play the resource
+    player_state["hand"].remove(card)
+    card["face_up"] = face_up
+    player_state["resources"].append(card)
+
+    print(f"{player} played additional resource: {card['name']}")
 
 def emit_game_update():
     global game_state
