@@ -49,6 +49,33 @@
           <h3>Removed from Game: {{ gameState.players[playerName].removed.length }} cards</h3>
         </div>
         
+        <div v-if="playerName === gameState.current_player">
+          <div v-if="gameState.waiting_for_start_action">
+            <h3>Start of Turn Action (DEVELOP RULE):</h3>
+            <button @click="chooseStartAction('draw')">Draw a Card</button>
+            <button @click="chooseStartAction('resource')">Play a Resource</button>
+          </div>
+          
+          <div v-if="gameState.waiting_for_resource_selection">
+            <h4>Select a card to play as resource:</h4>
+            <ul>
+              <li v-for="card in gameState.players[playerName].hand" :key="card.name">
+                {{ card.name }} ({{ card.type }})
+                <button 
+                  @click="playResource(card.name, true)" 
+                  :disabled="card.type !== 'Resource'"
+                >
+                  Play Face Up
+                </button>
+                <button @click="playResource(card.name, false)">
+                  Play Face Down
+                </button>
+              </li>
+            </ul>
+            <button @click="cancelResourceSelection">Cancel</button>
+          </div>
+        </div>
+        
         <div v-if="playerName === gameState.active_player && !gameState.waiting_for_start_action">
           <div v-if="gameState.waiting_for_response">
             <h3>Respond to Action</h3>
@@ -65,11 +92,6 @@
             </button>
             <button @click="endTurn" v-if="playerName === gameState.current_player">End Turn</button>
           </div>
-        </div>
-        
-        <div v-if="playerName === gameState.current_player && gameState.waiting_for_start_action">
-          <button @click="chooseStartAction('draw')">Draw a Card</button>
-          <button @click="chooseStartAction('resource')">Play a Resource</button>
         </div>
       </div>
     </div>
@@ -200,15 +222,19 @@ export default {
         },
         body: JSON.stringify({ player, card: cardName }),
       })
-        .then(response => response.json())
-        .then(data => {
-          if (data.error) {
-            console.error(data.error);
-          } else {
-            this.gameState = data.state;
+        .then(response => {
+          if (!response.ok) {
+            return response.json().then(err => { throw err; });
           }
+          return response.json();
         })
-        .catch(error => console.error('Error:', error));
+        .then(data => {
+          this.gameState = data.state;
+        })
+        .catch(error => {
+          console.error('Error playing card:', error);
+          alert(error.error || 'An error occurred while playing the card');
+        });
     },
     endTurn() {
       fetch('http://localhost:5000/api/end_turn', { method: 'POST' })

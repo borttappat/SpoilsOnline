@@ -152,41 +152,40 @@ def play_card():
     data = request.json
     player = data.get('player')
     card_name = data.get('card')
-
+    
     if player != game_state["active_player"]:
         return jsonify({"error": "Not your turn to act"}), 400
-
+    
+    if game_state["waiting_for_response"]:
+        return jsonify({"error": "Waiting for response to previous action"}), 400
+    
     player_state = game_state["players"][player]
     card = next((c for c in player_state["hand"] if c["name"] == card_name), None)
-
+    
     if not card:
         return jsonify({"error": "Card not in hand"}), 400
-
+    
     if game_state["current_player"] != player:
         if card["type"] not in ["Tactic"] and "TACTICAL" not in card.get("keywords", []):
             return jsonify({"error": "Cannot play this card type during opponent's turn"}), 400
-
+    
     if len(player_state["resources"]) < card["cost"]:
         return jsonify({"error": "Not enough resources"}), 400
-
+    
     # Pay the cost immediately
     for _ in range(card["cost"]):
         resource = player_state["resources"].pop()
         player_state["attached_resources"].append(resource)
-
+    
     # Remove card from hand
     player_state["hand"].remove(card)
-
+    
     # Add the play card action to the stack
-    game_state["action_stack"].append({"type": "play_card", "player": player, "card": card})
-
-    if not game_state["resolving_stack"]:
-        start_resolving_stack()
-    else:
-        # Switch active player to allow for response
-        game_state["active_player"] = "player2" if player == "player1" else "player1"
-        game_state["waiting_for_response"] = True
-
+    game_state["pending_action"] = {"type": "play_card", "player": player, "card": card}
+    game_state["active_player"] = "player2" if player == "player1" else "player1"
+    game_state["waiting_for_response"] = True
+    game_state["last_to_pass"] = None
+    
     emit_game_update()
     return jsonify({"message": f"Card {card_name} added to stack", "state": game_state})
 
@@ -289,13 +288,17 @@ def respond():
         return jsonify({"error": "Not your turn to respond"}), 400
     
     if response == "NO_RESPONSE":
-        if game_state["last_to_pass"] is None:
-            game_state["last_to_pass"] = player
-            game_state["active_player"] = "player2" if player == "player1" else "player1"
-        else:
-            resolve_action(game_state["pending_action"])
+        if game_state["pending_action"]["type"] == "end_turn":
+            resolve_end_turn(game_state["pending_action"])
             game_state["pending_action"] = None
-            game_state["last_to_pass"] = None
+        else:
+            if game_state["last_to_pass"] is None:
+                game_state["last_to_pass"] = player
+                game_state["active_player"] = "player2" if player == "player1" else "player1"
+            else:
+                resolve_action(game_state["pending_action"])
+                game_state["pending_action"] = None
+                game_state["last_to_pass"] = None
     elif response == "RESPONSE":
         game_state["last_to_pass"] = None
         game_state["waiting_for_response"] = False
