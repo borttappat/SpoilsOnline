@@ -56,13 +56,9 @@ def start_game():
         "waiting_for_resource_selection": False,
         "action_stack": [],
         "waiting_for_response": False,
-        "resolving_stack": False,
-        "resolving_trigger_or_cost": False,
-        "pending_action": None,
-        "last_to_pass": None
     }
     
-    # Reset game state
+    # Setup game state
     for player in game_state["players"]:
         game_state["players"][player]["deck"] = [
             create_card(f"Card{i}", random.choice(CARD_TYPES)) for i in range(30)
@@ -70,9 +66,40 @@ def start_game():
         random.shuffle(game_state["players"][player]["deck"])
         game_state["players"][player]["hand"] = [game_state["players"][player]["deck"].pop() for _ in range(5)]
         game_state["players"][player]["faction"] = create_faction_card(f"{player} Faction")
+        
+        # Add 6 starting resources
+        for _ in range(6):
+            resource_card = create_card(f"Resource{_}", "Resource")
+            game_state["players"][player]["resources"].append(resource_card)
     
+    start_turn(game_state["current_player"])
     emit_game_update()
     return jsonify({"message": "Game started", "state": game_state})
+
+def start_turn(player):
+    global game_state
+    game_state["phase"] = "start"
+    player_state = game_state["players"][player]
+    
+    # Implement restore rule: detach all resources
+    player_state["resources"].extend(player_state["attached_resources"])
+    player_state["attached_resources"] = []
+    
+    # Clear damage on characters (602.1a)
+    for card in player_state["in_play"]:
+        if card["type"] == "Character":
+            card["damage"] = 0
+    
+    # Make characters eligible to attack (602.1c)
+    for card in player_state["in_play"]:
+        if card["type"] == "Character":
+            card["can_attack"] = True
+    
+    # Set up for Develop Rule
+    game_state["waiting_for_start_action"] = True
+    game_state["active_player"] = player
+    
+    emit_game_update()
 
 @app.route('/api/choose_start_action', methods=['POST'])
 def choose_start_action():
@@ -165,26 +192,26 @@ def play_card():
     if not card:
         return jsonify({"error": "Card not in hand"}), 400
     
-    if game_state["current_player"] != player:
-        if card["type"] not in ["Tactic"] and "TACTICAL" not in card.get("keywords", []):
-            return jsonify({"error": "Cannot play this card type during opponent's turn"}), 400
+    if not check_threshold(player, card):
+        return jsonify({"error": "Threshold not met"}), 400
+    
+    if not can_play_card(player, card):
+        return jsonify({"error": "Cannot play this card type at this time"}), 400
     
     if len(player_state["resources"]) < card["cost"]:
         return jsonify({"error": "Not enough resources"}), 400
     
-    # Pay the cost immediately
+    # Attach resources for the card cost
     for _ in range(card["cost"]):
-        resource = player_state["resources"].pop()
+        resource = player_state["resources"].pop(0)
         player_state["attached_resources"].append(resource)
     
-    # Remove card from hand
     player_state["hand"].remove(card)
+    game_state["being_deployed"] = card
     
-    # Add the play card action to the stack
-    game_state["pending_action"] = {"type": "play_card", "player": player, "card": card}
+    game_state["action_stack"].append({"type": "play_card", "player": player, "card": card})
     game_state["active_player"] = "player2" if player == "player1" else "player1"
     game_state["waiting_for_response"] = True
-    game_state["last_to_pass"] = None
     
     emit_game_update()
     return jsonify({"message": f"Card {card_name} added to stack", "state": game_state})
@@ -197,14 +224,12 @@ def end_turn():
     if current_player != game_state["active_player"]:
         return jsonify({"error": "Not your turn to end"}), 400
 
-    game_state["pending_action"] = {"type": "end_turn", "player": current_player}
+    game_state["action_stack"].append({"type": "end_turn", "player": current_player})
     game_state["active_player"] = "player2" if current_player == "player1" else "player1"
     game_state["waiting_for_response"] = True
-    game_state["last_to_pass"] = None
 
     emit_game_update()
     return jsonify({"message": "Turn ending, waiting for response", "state": game_state})
-
 
 @app.route('/api/draw_card', methods=['POST'])
 def draw_card():
@@ -212,6 +237,9 @@ def draw_card():
     data = request.json
     player = data.get('player')
     player_state = game_state["players"][player]
+
+    if game_state["waiting_for_start_action"]:
+        return jsonify({"error": "Cannot draw card during DEVELOP RULE phase"}), 400
 
     if len(player_state["resources"]) < 3:
         return jsonify({"error": "Not enough resources to draw a card"}), 400
@@ -221,61 +249,12 @@ def draw_card():
         resource = player_state["resources"].pop()
         player_state["attached_resources"].append(resource)
 
-    game_state["pending_action"] = {"type": "draw_card", "player": player}
-    game_state["active_player"] = "player2" if player == "player1" else "player1"
+    game_state["action_stack"].append({"type": "draw_card", "player": player})
+    switch_active_player()
     game_state["waiting_for_response"] = True
-    game_state["last_to_pass"] = None
 
     emit_game_update()
     return jsonify({"message": "Draw card action added, waiting for response", "state": game_state})
-
-def resolve_action(action):
-    if action["type"] == "end_turn":
-        resolve_end_turn(action)
-    elif action["type"] == "draw_card":
-        resolve_draw_card(action)
-    # Add other action types as needed
-
-@app.route('/api/play_additional_resource', methods=['POST'])
-def play_additional_resource():
-    global game_state
-    data = request.json
-    player = data.get('player')
-    card_name = data.get('card')
-    face_up = data.get('face_up', False)
-
-    player_state = game_state["players"][player]
-
-    if len(player_state["resources"]) < 4:
-        return jsonify({"error": "Not enough resources to play additional resource"}), 400
-
-    card = next((c for c in player_state["hand"] if c["name"] == card_name), None)
-    if not card:
-        return jsonify({"error": "Card not in hand"}), 400
-
-    if face_up and card["type"] != "Resource":
-        return jsonify({"error": "Only Resource cards can be played face-up as resources"}), 400
-
-    # Pay the cost immediately
-    for _ in range(4):
-        resource = player_state["resources"].pop()
-        player_state["attached_resources"].append(resource)
-
-    # Remove card from hand
-    player_state["hand"].remove(card)
-
-    # Add the play additional resource action to the stack
-    game_state["action_stack"].append({"type": "play_additional_resource", "player": player, "card": card, "face_up": face_up})
-
-    if not game_state["resolving_stack"]:
-        start_resolving_stack()
-    else:
-        # Switch active player to allow for response
-        game_state["active_player"] = "player2" if player == "player1" else "player1"
-        game_state["waiting_for_response"] = True
-
-    emit_game_update()
-    return jsonify({"message": "Play additional resource action added to stack", "state": game_state})
 
 @app.route('/api/respond', methods=['POST'])
 def respond():
@@ -288,19 +267,12 @@ def respond():
         return jsonify({"error": "Not your turn to respond"}), 400
     
     if response == "NO_RESPONSE":
-        if game_state["pending_action"]["type"] == "end_turn":
-            resolve_end_turn(game_state["pending_action"])
-            game_state["pending_action"] = None
+        resolve_top_of_stack()
+        if game_state["action_stack"]:
+            switch_active_player()
         else:
-            if game_state["last_to_pass"] is None:
-                game_state["last_to_pass"] = player
-                game_state["active_player"] = "player2" if player == "player1" else "player1"
-            else:
-                resolve_action(game_state["pending_action"])
-                game_state["pending_action"] = None
-                game_state["last_to_pass"] = None
+            game_state["active_player"] = game_state["current_player"]
     elif response == "RESPONSE":
-        game_state["last_to_pass"] = None
         game_state["waiting_for_response"] = False
         # The client should follow up with a play_card or other action request
     else:
@@ -309,42 +281,34 @@ def respond():
     emit_game_update()
     return jsonify({"message": "Response processed", "state": game_state})
 
-def start_resolving_stack():
-    global game_state
-    game_state["resolving_stack"] = True
-    resolve_top_action()
-
-def resolve_top_action():
+def resolve_top_of_stack():
     global game_state
     if game_state["action_stack"]:
-        action = game_state["action_stack"].pop(0)
+        action = game_state["action_stack"].pop()
         if action["type"] == "play_card":
             resolve_play_card(action)
         elif action["type"] == "end_turn":
             resolve_end_turn(action)
         elif action["type"] == "draw_card":
             resolve_draw_card(action)
-        elif action["type"] == "play_additional_resource":
-            resolve_play_additional_resource(action)
-
-        # After resolving, switch active player and wait for response
-        game_state["active_player"] = "player2" if game_state["active_player"] == "player1" else "player1"
-        game_state["waiting_for_response"] = True
-    else:
-        # If the stack is empty, we're done resolving
-        game_state["resolving_stack"] = False
-        game_state["waiting_for_response"] = False
-        game_state["active_player"] = game_state["current_player"]
-
-    emit_game_update()
+        
+        # Check if there are more actions on the stack
+        if game_state["action_stack"]:
+            game_state["waiting_for_response"] = True
+            game_state["active_player"] = "player2" if action["player"] == "player1" else "player1"
+        else:
+            game_state["waiting_for_response"] = False
+            if action["type"] == "end_turn":
+                # Start the next turn
+                start_turn(game_state["current_player"])
+            else:
+                game_state["active_player"] = game_state["current_player"]
 
 def resolve_play_card(action):
-    global game_state
     player = action["player"]
     card = action["card"]
     player_state = game_state["players"][player]
 
-    # Put card into play or resolve its effect
     if card["type"] in ["Character", "Item", "Location"]:
         player_state["in_play"].append(card)
     elif card["type"] == "Tactic":
@@ -353,7 +317,8 @@ def resolve_play_card(action):
     elif card["type"] == "Resource":
         player_state["resources"].append(card)
 
-    print(f"Card {card['name']} resolved for {player}")
+    game_state["being_deployed"] = None
+    print(f"Card {card['name']} resolved and played by {player}")
 
 def resolve_end_turn(action):
     global game_state
@@ -372,25 +337,9 @@ def resolve_end_turn(action):
     game_state["current_player"] = "player2" if current_player == "player1" else "player1"
     game_state["turn"] += 1
 
-    # Start the next turn
-    new_current_player = game_state["current_player"]
-    new_player_state = game_state["players"][new_current_player]
-
-    # Detach all resources for the new player
-    new_player_state["resources"].extend(new_player_state["attached_resources"])
-    new_player_state["attached_resources"] = []
-
-    game_state["phase"] = "start"
-    game_state["waiting_for_start_action"] = True
-    game_state["waiting_for_resource_selection"] = False
-    game_state["active_player"] = new_current_player
-    game_state["resolving_stack"] = False
-
-    print(f"Turn ended for {current_player}, new turn started for {new_current_player}")
-    emit_game_update()
+    # The next turn will be started in resolve_top_of_stack
 
 def resolve_draw_card(action):
-    global game_state
     player = action["player"]
     player_state = game_state["players"][player]
 
@@ -402,24 +351,52 @@ def resolve_draw_card(action):
     else:
         print(f"{player} has no cards left in the deck")
 
-def resolve_play_additional_resource(action):
+@app.route('/api/cancel_card', methods=['POST'])
+def cancel_card():
     global game_state
+    if not game_state["action_stack"]:
+        return jsonify({"error": "No action to cancel"}), 400
+    
+    action = game_state["action_stack"].pop()
     player = action["player"]
     card = action["card"]
-    face_up = action["face_up"]
-    player_state = game_state["players"][player]
+    
+    game_state["players"][player]["hand"].append(card)
+    game_state["being_deployed"] = None
+    game_state["waiting_for_response"] = False
+    
+    # Return attached resources
+    cost = card.get("cost", 0)
+    while len(game_state["players"][player]["attached_resources"]) > 0 and cost > 0:
+        resource = game_state["players"][player]["attached_resources"].pop()
+        game_state["players"][player]["resources"].append(resource)
+        cost -= 1
+    
+    # Set the active player back to the player who played the card
+    game_state["active_player"] = player
+    
+    # If the action stack is now empty, set the active player to the current player
+    if not game_state["action_stack"]:
+        game_state["active_player"] = game_state["current_player"]
+    
+    emit_game_update()
+    return jsonify({"message": "Card deployment canceled", "state": game_state})
 
-    # Play the resource
-    card["face_up"] = face_up
-    player_state["resources"].append(card)
+def check_threshold(player, card):
+    # Implement threshold checking logic here
+    return True  # Placeholder
 
-    print(f"{player} played additional resource: {card['name']}")
+def can_play_card(player, card):
+    # Implement logic to check if the card can be played at this time
+    return True  # Placeholder
+
+def switch_active_player():
+    global game_state
+    game_state["active_player"] = "player2" if game_state["active_player"] == "player1" else "player1"
 
 def emit_game_update():
     global game_state
-    # Create a copy of the game state with the action stack as a list
-    emitted_state = {**game_state, 'action_stack': list(game_state['action_stack'])}
-    socketio.emit('game_update', emitted_state)
+    socketio.emit('game_update', game_state)
 
 @socketio.on('connect')
 def handle_connect():
@@ -427,3 +404,4 @@ def handle_connect():
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)
+
